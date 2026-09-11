@@ -1,0 +1,17 @@
+
+name: env-personal-loan
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+- python==3.12
+- pandas==2.3.3
+- numpy==2.4.6
+- matplotlib==3.11.0
+- seaborn==0.13.2
+- statsmodels==0.14.6
+- scikit-learn==1.9.0
+- scipy==1.18.1
+pip:
+  - jupyterlab==4.5.8
+  - ipykernel==7.3.0
