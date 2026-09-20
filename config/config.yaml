@@ -1,0 +1,232 @@
+
+global_config:
+  random_state: 42
+  logging_level: 'INFO'
+  log_file: 'logs/app.log'
+
+data_ingestion_config:
+  data_source_type: 'local_data_file'  # 'local_data_file' | 'remote_data_file' | 'database'
+  local_data_file: data/raw/Loan_Modelling.csv
+  source_URL: None
+  raw_data_folder: './data/raw_data/'
+  processed_data_folder: './data/processed_data/'
+
+# ---------------------------------------------------------------------------
+# Global preprocessing — dtype-based defaults, with named exceptions only.
+# Shared across all training_config entries below; sampler/scaler differ
+# per entry and live under each entry's data_config instead.
+# ---------------------------------------------------------------------------
+preprocessing_config:
+  target:
+    column_name: 'Personal_Loan'
+    positive_class: 1
+    display_mapping: {1: 'LoanCandidate', 0: 'NotLoanCandidate'}
+  
+  split:
+    test_size: 0.2
+    stratify: true
+  
+  drop_columns:
+    columns: ['ID', 'ZIPCode', 'Experience']
+
+  rename_columns:
+    column_mapping: {}
+  
+  #zipcode_config: 
+  #  column: 'ZIPCode'
+  #  divisor: 1000   # ZIPCode is dropped above, so this is a no-op; set true only if ZIPCode is kept
+
+  missing_value_treatment:
+    method: 'dtype_based'          # 'dtype_based' | 'simple_imputer'
+    numeric_strategy: 'mean'
+    categorical_strategy: 'mode'
+
+  outlier_treatment:
+    detection_method: 'iqr'
+    factor: 1.5
+    treatment_method: 'clip'
+
+  one_hot_encoding:
+    method: 'onehotencoder'        # 'onehotencoder' | 'get_dummies'
+    infer_columns: true
+    columns: []
+    handle_unknown: 'ignore'       # onehotencoder only
+
+  scaler:
+    type: 'standard'
+    columns: []
+
+# ---------------------------------------------------------------------------
+# Per-model training configs. Each entry: its own data split/scaler/sampler
+# (data_config) + its own model/fine-tuning setup (model_config).
+# ---------------------------------------------------------------------------
+training_config:
+  - model_name: 'logistic_regression_base_model'   # explicit run label, avoids relying on model_type alone
+    model_config:
+      model_type: 'logistic_regression'
+      hyperparameters:
+        C: 1.0
+        class_weight: 'balanced'
+      scoring_metric: 'f1_score'
+  
+  - model_name: 'logistic_regression_oversampling_optuna'   # explicit run label, avoids relying on model_type alone
+    data_config:
+      over_sampling:
+        method: 'SMOTE'
+    model_config:
+      model_type: 'logistic_regression'
+      hyperparameters:
+        C: 1.0
+        class_weight: 'balanced'
+      scoring_metric: 'f1_score'
+      fine_tuning:
+        method: 'optuna'
+        direction: 'maximize'
+        n_trials: 20               # was missing in original — now consistent across all entries
+        cv_folds: 5
+        search_space:
+          C: [0.01, 0.1, 1.0, 10.0, 100.0]
+          solver: ['lbfgs', 'liblinear', 'saga']   # explicit, so penalty can be sampled conditionally on solver
+  
+  - model_name: 'decision_tree_classifier_base_model'
+    model_config:
+      model_type: 'decision_tree_classifier'
+      hyperparameters:
+        criterion: 'gini'
+        class_weight: 'balanced'
+      scoring_metric: 'f1_score'
+  
+  - model_name: 'decision_tree_classifier_class_weights_optuna'
+    model_config:
+      model_type: 'decision_tree_classifier'
+      hyperparameters:
+        criterion: 'gini'
+        class_weight: 'balanced'
+      scoring_metric: 'f1_score'   
+    fine_tuning:
+        method: 'optuna'
+        direction: 'maximize'
+        n_trials: 20
+        cv_folds: 5
+        search_space:
+          max_depth: [2, 5, 10]
+          max_leaf_nodes: [5, 10, 20, 50, 100]
+          min_samples_split: [5, 15, 25, 35, 45]
+          min_samples_leaf: [1, 3, 5, 7, 9]
+          ccp_alpha: [0.0, 0.01, 0.1, 0.5, 1.0]
+
+  - model_name: 'decision_tree_classifier_oversampling_optuna'
+    data_config:
+      scaler:
+        type: 'standard'
+        columns: []
+      over_sampling:
+        method: 'SMOTE'
+    model_config:
+      model_type: 'decision_tree_classifier'   # same model, sampling makes this variant distinct — see note below
+      hyperparameters:
+        criterion: 'gini'
+      scoring_metric: 'f1_score'
+      fine_tuning:
+        method: 'optuna'
+        direction: 'maximize'
+        n_trials: 20
+        cv_folds: 5
+        search_space:
+          max_depth: [2, 5, 10]
+          max_leaf_nodes: [5, 10, 20, 50, 100]
+          min_samples_split: [5, 15, 25, 35, 45]
+          min_samples_leaf: [1, 3, 5, 7, 9]
+          ccp_alpha: [0.0, 0.01, 0.1, 0.5, 1.0]
+
+  - model_name: 'decision_tree_classifier_undersampling_optuna'
+    data_config:
+      split:
+        test_size: 0.2
+        stratify: true
+      scaler:
+        type: 'standard'
+        columns: []
+      under_sampling:
+        method: 'RandomUnderSampling'
+    model_config:
+      model_type: 'decision_tree_classifier'
+      hyperparameters:
+        criterion: 'gini'
+      scoring_metric: 'f1_score'
+      fine_tuning:
+        method: 'optuna'
+        direction: 'maximize'
+        n_trials: 20
+        cv_folds: 5
+        search_space:
+          max_depth: [2, 5, 10]
+          max_leaf_nodes: [5, 10, 20, 50, 100]
+          min_samples_split: [5, 15, 25, 35, 45]
+          min_samples_leaf: [1, 3, 5, 7, 9]
+          ccp_alpha: [0.0, 0.01, 0.1, 0.5, 1.0]
+
+         
+artifacts_config:
+  model_save_format: 'pkl'
+  artifacts_path: 'models/artifacts'
+  challenger_model_path: 'models/challenger_model'
+  champion_model_path: 'models/champion_model'
+
+mlflow_config:
+  tracking_uri: 'http://localhost:5000'
+  timeout: 60
+  interval: 1.0
+  experiment_name: 'PersonalLoan_Classification'
+  registered_model_name: 'PersonalLoan_Classification_Model'
+  challenger_model_alias: 'challenger'
+  champion_model_alias: 'champion'
+
+logger_config:
+  log_level: 'INFO'
+  log_file: 'inference.log'
+
+inference_config:
+  
+  inference_type: 'local'      # 'local' | 'remote'
+
+  local_inference:
+    single_inference: {
+      "ID": 2389,
+      "Age": 64,
+      "Experience": 39,
+      "Income": 23.0,
+      "ZIPCode": 91768,
+      "Family": 3,
+      "CCAvg": 0.5,
+      "Education": 1,
+      "Mortgage": 0,
+      "Securities_Account": 1,
+      "CD_Account": 0,
+      "Online": 0,
+      "CreditCard": 0
+    }
+  
+  single_inference:
+    single_record: 'data/inference_input/single_record.json'   # only json is supported
+    
+  batch_inference:
+    batch_features: 'data/inference_input/batch_features.csv'   #supported only csv file format
+    batch_targets: 'data/inference_input/batch_targets.csv'
+    batch_predictions_path:  'data/inference_output/batch_predictions.csv'
+
+  remote_inference:
+    single_inference:
+      api_endpoint: 'http://localhost:5454/predict'
+      api_method: 'POST'
+      headers:
+        Content-Type: 'application/json'
+
+    batch_inference:
+      input_path: 'data/inference_input/batch_input_data.csv'
+      output_path: 'data/inference_output/batch_predictions.csv'
+      api_endpoint: 'http://localhost:5454/predict_batch'
+      api_method: 'POST'
+      headers:
+        Content-Type: 'application/json'
+      batch_size: 100

@@ -1,0 +1,18 @@
+{
+  "features": {
+    "ID": 2389,
+    "Age": 64,
+    "Experience": 39,
+    "Income": 23.0,
+    "ZIPCode": 91768,
+    "Family": 3,
+    "CCAvg": 0.5,
+    "Education": 1,
+    "Mortgage": 0,
+    "Securities_Account": 1,
+    "CD_Account": 0,
+    "Online": 0,
+    "CreditCard": 0
+  },
+  "target" : 1
+}

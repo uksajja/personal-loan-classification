@@ -1,10 +1,19 @@
-pandas==2.3.3
 numpy==2.4.6
+pandas==2.3.3
 matplotlib==3.11.0
 seaborn==0.13.2
-statsmodels==0.14.6
 scikit-learn==1.9.0
-scipy==1.18.1
-jupyterlab==4.5.8
-ipykernel==7.3.0
+imbalanced-learn==0.14.2
+statsmodels==0.14.6
+
+optuna==4.9.0
+mlflow==3.13.0
+
+joblib==1.5.3
+cloudpickle==3.1.2
+skl2onnx==1.20.0
+onnx==1.22.0
+onnxruntime==1.26.0
+
+pandera
 
