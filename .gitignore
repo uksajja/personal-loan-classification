@@ -2,4 +2,10 @@
 __pycache__/
 .venv/
 .env/
-
+conda/
+.conda/
+data/processed_data/
+data/inference_output/
+mlartifacts/
+models/
+logs/
