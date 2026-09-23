@@ -11,6 +11,7 @@ from sklearn.metrics import  make_scorer, accuracy_score, precision_score, recal
 import mlflow
 from mlflow.models import infer_signature
 import yaml
+import pandera.pandas as pa
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(PROJECT_ROOT))
@@ -49,24 +50,19 @@ class TrainingPipeline:
         self.data_ingestion_config = self.config['data_ingestion_config']
         self.preprocessing_config = self.config['preprocessing_config']
         self.training_config = self.config['training_config']
+
         self.mlflow_config = self.config['mlflow_config']
-        self.artifact_config = self.config['artifacts_config']           
-
-        self.data_ingestor = DataIngestor(self.data_ingestion_config)
         self.mlflow_manager = MLFlowManager(self.mlflow_config)
+        self.mlflow_manager.start_cycle()
 
+        self.artifact_config = self.config['artifacts_config']
         self.artifacts_path = self.artifact_config['artifacts_path']
-        self.challenger_model_path = self.artifact_config['challenger_model_path']
-        self.champion_model_path = self.artifact_config['champion_model_path']
         self.model_save_format = self.artifact_config['model_save_format']
-
-        os.makedirs(Path(self.artifacts_path), exist_ok=True)
-        os.makedirs(Path( self.challenger_model_path), exist_ok=True)
-        os.makedirs(Path( self.champion_model_path), exist_ok=True)
 
     def load_data(self):
         # Initialize individual pipeline components
-        df = self.data_ingestor.load_data()
+        data_ingestor = DataIngestor(self.data_ingestion_config)
+        df = data_ingestor.load_data()
         return df
    
     def prepare_training_data(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -74,6 +70,24 @@ class TrainingPipeline:
         target = self.preprocessing_config.get('target', {})
         target_column = target.get('column_name')
         return PreProcessor.filter_missing_target_rows(df, target_column)
+
+    @staticmethod
+    def build_input_schema(df: pd.DataFrame, max_categorical_card: int = 10) -> pa.DataFrameSchema:
+        """Derives value-level checks from training data. Dtypes come from
+        MLflow's signature already — this only adds what signature can't express."""
+        columns = {}
+        for col in df.columns:
+            dtype = df[col].dtype.type
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                columns[col] = pa.Column(dtype, nullable=False)
+                continue
+            n_unique = df[col].nunique()
+            if n_unique <= max_categorical_card:
+                checks = pa.Check.isin(sorted(df[col].dropna().unique().tolist()))
+            else:
+                checks = pa.Check.ge(df[col].min())
+            columns[col] = pa.Column(dtype, checks, nullable=False)
+        return pa.DataFrameSchema(columns)
 
     def build_train_pipeline(self, preprocessing_config: dict, data_config: dict, model_config:dict, random_state: int ):
             """
@@ -115,7 +129,7 @@ class TrainingPipeline:
         X_train_raw, X_test_raw, y_train_raw, y_test_raw = PreProcessor.split_data(X, y, self.preprocessing_config, self.random_state)
 
         Logger.info(f"X_train.shape: {X_train_raw.shape}    y_train.shape: {y_train_raw.shape}")
-        Logger.info(f"X_test.shape: {X_test_raw.shape}    y_test.shape: {y_test_raw.shape}")
+        Logger.info(f"X_test.shape : {X_test_raw.shape}     y_test.shape : {y_test_raw.shape}")
         Logger.info(f"Finished data preparation and splitting.")
 
 
@@ -253,6 +267,7 @@ class TrainingPipeline:
             input_example = X_train_raw[:1]
             prediction = logged_pipeline.predict(input_example)
             signature = infer_signature(input_example, prediction)
+            input_schema = TrainingPipeline.build_input_schema(X_train_raw)
 
             payload = {
                 'model': logged_pipeline,
@@ -267,13 +282,18 @@ class TrainingPipeline:
                 'test_metrics': logged_test_metrics,
                 'signature': signature,
                 'input_example': input_example,
+                'input_schema': input_schema,
                 'artifact_name': 'model',
                 'model_logger': 'sklearn'
             }
             Logger.info(f"Logging model to MLflow: {logged_model_name} | fine_tuning_method: {fine_tuning_method} | scoring_metric: {scoring_metric}")  
             self.mlflow_manager.log_model_to_mlflow(payload)
-            
-            Logger.info(f"Logging model to artifacts folder as: {self.artifacts_path}/{logged_model_name}.{self.model_save_format}")
+
+            """
+            #------------------------------------------------------------------------------------------------------------------------
+            # This commented code is only for additional local copy of the models, paramters and scoring metrics
+            #------------------------------------------------------------------------------------------------------------------------
+            Logger.info(f"Logging model to local artifacts folder as: {self.artifacts_path}/{logged_model_name}.{self.model_save_format}")
             artifact_path = Path(f"{self.artifacts_path}/{logged_model_name}.{self.model_save_format}")
             ModelExporter.save_model(logged_pipeline, artifact_path)
             
@@ -289,24 +309,18 @@ class TrainingPipeline:
             Logger.info(f"Model parameters and scores: {output}")
             with open(f"{self.artifacts_path}/{logged_model_name}_params_score.yaml", "w") as f:
                 yaml.dump(output, f)
+            """
                 
 
-    def evaluate_and_promote_cycle_best_model(self, mlflow_manager: MLFlowManager, champion_metric: str='test_score'):
-    
-        experiment_name = mlflow_manager.experiment_name
-        print("Experiment Name:", experiment_name if experiment_name else "NOT FOUND")
-        experiment_id = mlflow_manager.experiment_id
-        print("Experiment ID:", experiment_id if experiment_id else "NOT FOUND")
-        
-        all_runs = mlflow.search_runs(experiment_ids=[experiment_id])
-        print("Total runs in experiment:", len(all_runs))
-        print("Columns:", all_runs.columns.tolist())
+    def evaluate_and_promote_cycle_best_model(self, mlflow_manager: MLFlowManager, champion_metric: str = 'test_score'):
+        """
+        Evaluates all candidate runs in the current cycle, registers the
+        best one as challenger, and promotes it to champion if it beats
+        the current champion's score.
+        """
+        Logger.info(f"Evaluating cycle {mlflow_manager.cycle_id} for experiment '{mlflow_manager.experiment_name}'")
 
-        if not all_runs.empty:
-            print(all_runs[[c for c in all_runs.columns if 'tag' in c.lower() or 'metric' in c.lower()]])
-        
-        
-        best_run = mlflow_manager.pick_best_run('test_score')
+        best_run = mlflow_manager.pick_best_run(champion_metric)
         best_run_id = best_run.get('run_id')
         best_model_name = best_run.get('tags.model_name')
 
@@ -317,38 +331,32 @@ class TrainingPipeline:
             challenger_model = mlflow.pyfunc.load_model(challenger_model_uri)
             Logger.info(f"Loaded challenger model successfully from {challenger_model_uri}")
         except Exception as e:
-            # Log helpful diagnostics: the model URI, registered version source, and run artifacts
-            try:
-                src = getattr(challenger_version, 'source', None)
-            except Exception:
-                src = None
+            src = getattr(challenger_version, 'source', None)
             Logger.info(f"Failed loading challenger model URI={challenger_model_uri}, source={src}: {e}")
-            # Try to list artifacts for the run (if available)
-            try:
-                run_id = getattr(challenger_version, 'run_id', None)
-                if run_id:
+            run_id = getattr(challenger_version, 'run_id', None)
+            if run_id:
+                try:
                     arts = mlflow.artifacts.list_artifacts(f"runs:/{run_id}/")
-                    art_paths = [a.path for a in arts]
-                    Logger.info(f"Artifacts for run {run_id}: {art_paths}")
-            except Exception as e2:
-                Logger.info(f"Failed to list run artifacts: {e2}")
+                    Logger.info(f"Artifacts for run {run_id}: {[a.path for a in arts]}")
+                except Exception as e2:
+                    Logger.info(f"Failed to list run artifacts: {e2}")
             raise
-        
-        ModelExporter.save_model(challenger_model, Path(f"{self.challenger_model_path}/{best_model_name}.{self.model_save_format}"))
 
-        champion_score, candidate_score, is_promoted = mlflow_manager.promote_if_better(challenger_version, challenger_score, champion_metric='test_score')
+        champion_score, candidate_score, is_promoted = mlflow_manager.promote_if_better(
+            challenger_version, challenger_score, champion_metric=champion_metric
+        )
 
-        Logger.info(f"==============================================================================================")
+        Logger.info("=" * 90)
         Logger.info(f"Best run ID: {best_run_id} | Best model name: {best_model_name}")
         Logger.info(f"Champion score: {champion_score} | Candidate score: {candidate_score} | Promoted: {is_promoted}")
-
-        Logger.info(
+        Logger.info(    
             f"Cycle {mlflow_manager.cycle_id}: challenger_score={challenger_score}, "
             f"champion_score={champion_score}, promoted={is_promoted}"
         )
-        Logger.info(f"==============================================================================================")
-        # Download the model files directly into your custom folder
-        local_path = mlflow_manager.download_champion_artifact(dst_path=self.champion_model_path)
+        Logger.info("=" * 90)
+        Logger.info(f"Downloading new champion model and schema to {self.artifacts_path}")
+        model_path, schema_path, meta_data_path = mlflow_manager.download_champion_artifacts(dst_path=self.artifacts_path)
+        Logger.info(f"Downloaded current champion to {model_path}, schema to {schema_path} and meta data to {meta_data_path}")
 
     def run(self):
         Logger.info(f"==============================================================================================")
@@ -369,6 +377,7 @@ class TrainingPipeline:
         Logger.info(f"Evaluating and promoting the best model...")
         self.evaluate_and_promote_cycle_best_model(self.mlflow_manager, champion_metric='test_score')
 
+
 if __name__ == '__main__':
     try:
         Logger.info(f"***********************************************************************************************")
@@ -376,6 +385,7 @@ if __name__ == '__main__':
         obj = TrainingPipeline()
         obj.run()
         Logger.info(f">>>>>> STAGE: {STAGE_NAME} completed <<<<<<\n\nx==========x")
+
     except Exception as e:
         Logger.exception(e)
         raise e
