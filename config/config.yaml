@@ -6,7 +6,7 @@ global_config:
 
 data_ingestion_config:
   data_source_type: 'local_data_file'  # 'local_data_file' | 'remote_data_file' | 'database'
-  local_data_file: data/raw/Loan_Modelling.csv
+  local_data_file: data/raw/Loan_Modeling.csv
   source_URL: None
   raw_data_folder: './data/raw_data/'
   processed_data_folder: './data/processed_data/'
@@ -169,9 +169,8 @@ training_config:
          
 artifacts_config:
   model_save_format: 'pkl'
-  artifacts_path: 'models/artifacts'
-  challenger_model_path: 'models/challenger_model'
-  champion_model_path: 'models/champion_model'
+  artifacts_path: 'artifacts'
+
 
 mlflow_config:
   tracking_uri: 'http://localhost:5000'
@@ -187,26 +186,10 @@ logger_config:
   log_file: 'inference.log'
 
 inference_config:
-  
   inference_type: 'local'      # 'local' | 'remote'
-
-  local_inference:
-    single_inference: {
-      "ID": 2389,
-      "Age": 64,
-      "Experience": 39,
-      "Income": 23.0,
-      "ZIPCode": 91768,
-      "Family": 3,
-      "CCAvg": 0.5,
-      "Education": 1,
-      "Mortgage": 0,
-      "Securities_Account": 1,
-      "CD_Account": 0,
-      "Online": 0,
-      "CreditCard": 0
-    }
-  
+  model_name:  'PersonalLoan_Classification_Model'
+  model_alias: 'champion'     # 'champion' | 'challenger' | 'model_name'
+ 
   single_inference:
     single_record: 'data/inference_input/single_record.json'   # only json is supported
     

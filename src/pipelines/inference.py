@@ -6,6 +6,7 @@ import json
 import time
 import pandas as pd
 import mlflow
+import pandera.pandas as pa
 
 
 # Do not change the location. 
@@ -17,7 +18,7 @@ sys.path.append(str(PROJECT_ROOT))
 STAGE_NAME = "Inference"
 
 from src.core.config_manager import get_config,  CONFIG_PATH, PROJECT_ROOT
-from src.core.schema import SCHEMA_DTYPES, validate_input
+from src.core.schema import validate_input
 from src.core.mlflow_manager import MLFlowManager
 from src.utils.data_io import read_batch, write_batch
 from src.utils.check_mlflow_ready import wait_for_mlflow
@@ -33,35 +34,25 @@ class InferencePipeline:
     scaler/etc., learned during training and reused unchanged here.
     """
     
-    def __init__(self, config: dict | None = None, champion_model_alias: str = "champion"):
+    def __init__(self, config: dict | None = None):
         self.config = get_config(CONFIG_PATH)
         self.raw_data_folder = self.config["data_ingestion_config"]["raw_data_folder"]
         # Wait for MLflow server to be ready. If mlflow server is not started, an error will be raised
         wait_for_mlflow(tracking_uri=self.config['mlflow_config']['tracking_uri'], timeout=self.config['mlflow_config']['timeout'], interval=self.config['mlflow_config']['interval'])
         self.mlflow_manager = MLFlowManager(self.config["mlflow_config"])
-        self.inference_config = self.config["inference_config"]
-        self.champion_model_alias = champion_model_alias
 
-        self.model_uri = f"models:/{self.mlflow_manager.experiment_model_name}@{self.mlflow_manager.champion_model_alias}"
-        self.model = self.load_model(self.model_uri)
+        self.inference_config = self.config["inference_config"]
+        self.inference_model_name = self.inference_config["model_name"]
+        self.inference_model_alias = self.inference_config["model_alias"]
+       
+        self.model, self.schema = self.mlflow_manager.load_model_and_schema_by_alias(self.inference_model_name, self.inference_model_alias)
 
         self.single_inference = self.inference_config.get("single_inference", {})
         self.batch_inference  = self.inference_config.get("batch_inference", {})
         self.batch_output_path = self.batch_inference.get("batch_predictions_path", {}) 
         self.batch_size = self.batch_inference.get("batch_size", 100)
 
-    # ------------------------------------------------------------------
-    def load_model(self, model_uri):
-        Logger.info(f"Loading model from {model_uri}")
-        try:
-            model = mlflow.pyfunc.load_model(model_uri)
-        except mlflow.exceptions.MlflowException as e:
-            raise RuntimeError(
-                f"Could not load model at '{model_uri}' "
-                f"promoted yet? Original error: {e}"
-            ) from e
-        Logger.info(f"Model loaded successfully from {model_uri}")
-        return model
+    
 
 
     # ------------------------------------------------------------------
@@ -74,10 +65,9 @@ class InferencePipeline:
         """
         
         start = time.perf_counter()
-
         df = pd.DataFrame([record])
-        df = df.astype(SCHEMA_DTYPES)
-        valid_df, rejected_df = validate_input(df)
+
+        valid_df, rejected_df = validate_input(df, self.schema)
         if not rejected_df.empty:
             Logger.info(f"The input is invalid. Prediction is NOT posssible.")
             return {}
@@ -114,8 +104,8 @@ class InferencePipeline:
         start = time.perf_counter()
 
         df = read_batch(input_file)
-        df = df.astype(SCHEMA_DTYPES)
-        valid_df, rejected_df = validate_input(df)
+
+        valid_df, rejected_df = validate_input(df, self.schema)
 
         output_path = Path(output_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)

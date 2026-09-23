@@ -94,8 +94,3 @@ class ModelExporter:
         # Placeholder for future implementation to extract model signature (e.g., input/output schema)
         return {"input_features": None, "output_labels": None}
     
-        #--------------------------- save_model_mlflow ------------------------------
-    @staticmethod
-    def save_model_mlflow(model, model_name: str):
-        import mlflow.sklearn
-        mlflow.sklearn.log_model(model, model_name)
