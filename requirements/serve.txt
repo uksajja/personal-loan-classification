@@ -5,6 +5,5 @@ flask-cors==6.0.5
 gunicorn==23.0.0
 mlflow-skinny==3.13.0
 mlflow-tracing==3.13.0
-pandera
+pandera==0.32.1
 requests==2.34.2
-boto3
