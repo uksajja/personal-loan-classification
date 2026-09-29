@@ -6,4 +6,3 @@ scikit-learn==1.9.0
 joblib==1.5.3
 cloudpickle==3.1.2
 python-dotenv==1.2.2
-xgboost==2.0.3
