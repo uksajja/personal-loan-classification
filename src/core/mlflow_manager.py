@@ -427,14 +427,17 @@ class MLFlowManager:
         (subfolder), and a metadata snapshot (root) to a local directory.
 
             dst_path/
-            ├── model/            <- model.pkl, MLmodel, conda.yaml, ...
-            ├── schema/
-            │   └── input_schema.yaml
-            └── metadata.json
+            |
+            └── champion/
+                |
+                ├── model/            <- model.pkl, MLmodel, conda.yaml, ...
+                ├── schema/
+                │   └── input_schema.yaml
+                └── metadata.json
 
         Returns (model_local_path, schema_local_path, metadata_local_path).
         """
-        dst = Path(dst_path)
+        dst = Path(dst_path)/"champion"
         if dst.exists():
             shutil.rmtree(dst)
         dst.mkdir(parents=True, exist_ok=True)
@@ -452,10 +455,10 @@ class MLFlowManager:
 
         model_uri = f"models:/{self.experiment_model_name}@{self.champion_model_alias}"
         model_local_path = mlflow.artifacts.download_artifacts(
-            artifact_uri=model_uri, dst_path=str(dst / "champion_model")
+            artifact_uri=model_uri, dst_path=str(dst / "model")
         )
         schema_local_path = mlflow.artifacts.download_artifacts(
-            artifact_uri=f"runs:/{champion_version.run_id}/schema", dst_path=str(dst / "schema")
+            artifact_uri=f"runs:/{champion_version.run_id}/schema/input_schema.yaml", dst_path=str(dst / "schema")
         )
 
         metadata = {

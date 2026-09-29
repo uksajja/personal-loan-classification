@@ -1,0 +1,6 @@
+# Local development only — not installed in any Docker image.
+-r train.txt
+
+jupyterlab==4.5.8
+ipykernel==7.3.0
+streamlit==1.58.0

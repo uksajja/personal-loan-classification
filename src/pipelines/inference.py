@@ -18,8 +18,11 @@ sys.path.append(str(PROJECT_ROOT))
 STAGE_NAME = "Inference"
 
 from src.core.config_manager import get_config,  CONFIG_PATH, PROJECT_ROOT
-from src.core.schema import validate_input
+from src.core.schema import validate_input_against_schema
 from src.core.mlflow_manager import MLFlowManager
+from src.model_loaders.factory import get_loader
+from src.model_loaders.local_loader import LocalModelLoader
+from src.model_loaders.mlflow_loader import MLflowModelLoader
 from src.utils.data_io import read_batch, write_batch
 from src.utils.check_mlflow_ready import wait_for_mlflow
 from src.utils.logger import Logger  # or `from logger_setup import logger` per your earlier module-level setup
@@ -37,15 +40,33 @@ class InferencePipeline:
     def __init__(self, config: dict | None = None):
         self.config = get_config(CONFIG_PATH)
         self.raw_data_folder = self.config["data_ingestion_config"]["raw_data_folder"]
-        # Wait for MLflow server to be ready. If mlflow server is not started, an error will be raised
-        wait_for_mlflow(tracking_uri=self.config['mlflow_config']['tracking_uri'], timeout=self.config['mlflow_config']['timeout'], interval=self.config['mlflow_config']['interval'])
-        self.mlflow_manager = MLFlowManager(self.config["mlflow_config"])
-
+        
         self.inference_config = self.config["inference_config"]
-        self.inference_model_name = self.inference_config["model_name"]
-        self.inference_model_alias = self.inference_config["model_alias"]
-       
-        self.model, self.schema = self.mlflow_manager.load_model_and_schema_by_alias(self.inference_model_name, self.inference_model_alias)
+        self.inference_type = self.inference_config.get("inference_type", "local")  # or "batch"
+
+        if self.inference_type == "local":
+            # Load model from local artifacts
+            model_loader = LocalModelLoader(self.config)
+            dst = model_loader.model_source
+            new_artifact = model_loader.load(dst=dst)
+            self.model, self.schema, self.metadata =new_artifact.model, new_artifact.input_schema, new_artifact.metadata
+            Logger.info(f"Champion loaded (metadata={self.metadata})")
+        elif self.inference_type == "mlflow":       # Wait for MLflow server to be ready. If mlflow server is not started, an error will be raised
+            #mlflow_tracking_uri = self.config['mlflow_config']['tracking_uri']
+            mlflow_tracking_uri = "http://localhost:5000"
+            model_name = self.config['mlflow_config']["registered_model_name"]
+            model_alias = self.config['mlflow_config']["champion_model_alias"]
+            #wait_for_mlflow(tracking_uri=self.config['mlflow_config']['tracking_uri'], timeout=self.config['mlflow_config']['timeout'], interval=self.config['mlflow_config']['interval'])
+            
+            model_loader = MLflowModelLoader(mlflow_tracking_uri, model_name, model_alias)
+            dst = Path("./mlflow")
+            new_artifact = model_loader.load(dst=dst)
+            self.model, self.schema, self.metadata = new_artifact.model, new_artifact.input_schema, new_artifact.metadata
+            Logger.info(f"Champion loaded (metadata={self.metadata})")
+            #self.model, self.schema = self.mlflow_manager.load_model_and_schema_by_alias(self.inference_model_name, self.inference_model_alias)
+            #Logger.info(f"Model {self.inference_model_name} with alias {self.inference_model_alias} loaded successfully")
+        else:
+            raise ValueError("Invalid inference type. Must be 'local' or 'mlflow'")
 
         self.single_inference = self.inference_config.get("single_inference", {})
         self.batch_inference  = self.inference_config.get("batch_inference", {})
@@ -53,8 +74,6 @@ class InferencePipeline:
         self.batch_size = self.batch_inference.get("batch_size", 100)
 
     
-
-
     # ------------------------------------------------------------------
     # SINGLE INFERENCE
     # ------------------------------------------------------------------
@@ -67,7 +86,7 @@ class InferencePipeline:
         start = time.perf_counter()
         df = pd.DataFrame([record])
 
-        valid_df, rejected_df = validate_input(df, self.schema)
+        valid_df, rejected_df = validate_input_against_schema(df, self.schema)
         if not rejected_df.empty:
             Logger.info(f"The input is invalid. Prediction is NOT posssible.")
             return {}
@@ -105,7 +124,7 @@ class InferencePipeline:
 
         df = read_batch(input_file)
 
-        valid_df, rejected_df = validate_input(df, self.schema)
+        valid_df, rejected_df = validate_input_against_schema(df, self.schema)
 
         output_path = Path(output_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)

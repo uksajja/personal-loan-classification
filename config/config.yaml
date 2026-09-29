@@ -173,7 +173,7 @@ artifacts_config:
 
 
 mlflow_config:
-  tracking_uri: 'http://localhost:5000'
+  tracking_uri: ${MLFLOW_TRACKING_URI}
   timeout: 60
   interval: 1.0
   experiment_name: 'PersonalLoan_Classification'
@@ -186,10 +186,9 @@ logger_config:
   log_file: 'inference.log'
 
 inference_config:
-  inference_type: 'local'      # 'local' | 'remote'
-  model_name:  'PersonalLoan_Classification_Model'
-  model_alias: 'champion'     # 'champion' | 'challenger' | 'model_name'
- 
+  inference_type: 'local'      # 'local' | 'mlflow'
+  model_source: 'artifacts/champion'
+  
   single_inference:
     single_record: 'data/inference_input/single_record.json'   # only json is supported
     
@@ -200,7 +199,7 @@ inference_config:
 
   remote_inference:
     single_inference:
-      api_endpoint: 'http://localhost:5454/predict'
+      api_endpoint: 'http://localhost:8080/predict'
       api_method: 'POST'
       headers:
         Content-Type: 'application/json'
@@ -208,7 +207,7 @@ inference_config:
     batch_inference:
       input_path: 'data/inference_input/batch_input_data.csv'
       output_path: 'data/inference_output/batch_predictions.csv'
-      api_endpoint: 'http://localhost:5454/predict_batch'
+      api_endpoint: 'http://localhost:8080/predict_batch'
       api_method: 'POST'
       headers:
         Content-Type: 'application/json'

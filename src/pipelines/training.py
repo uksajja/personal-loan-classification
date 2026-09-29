@@ -85,7 +85,7 @@ class TrainingPipeline:
             if n_unique <= max_categorical_card:
                 checks = pa.Check.isin(sorted(df[col].dropna().unique().tolist()))
             else:
-                checks = pa.Check.ge(df[col].min())
+                checks = pa.Check.ge(df[col].min().item())
             columns[col] = pa.Column(dtype, checks, nullable=False)
         return pa.DataFrameSchema(columns)
 

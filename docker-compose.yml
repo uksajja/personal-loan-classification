@@ -1,0 +1,93 @@
+services:
+  mlflow:
+    environment:
+      HOST_UID: ${HOST_UID}
+      HOST_GID: ${HOST_GID}
+      MLFLOW_HOST: ${MLFLOW_HOST:-0.0.0.0}
+      MLFLOW_HOST_PORT: ${MLFLOW_HOST_PORT}
+      MLFLOW_CONTAINER_PORT: ${MLFLOW_CONTAINER_PORT}
+    build:
+      context: .
+      dockerfile: deployment/mlflow/Dockerfile
+    image: ${PROJECT_NAME}-mlflow:${VERSION:-latest}
+    container_name: ${PROJECT_NAME}-mlflow-tracking
+    # mlflow is installed at image build time now (see deployment/mlflow/Dockerfile),
+    # so startup no longer pays a ~30-90s `pip install` cost on every `up`
+    ports:
+      - "${MLFLOW_HOST_PORT}:${MLFLOW_CONTAINER_PORT}"
+    volumes:
+      - ./mlflow:/app/mlflow
+    restart: unless-stopped
+    depends_on:
+      init-permissions:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${MLFLOW_CONTAINER_PORT}/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+ 
+  init-permissions:
+    image: alpine:3.18
+    container_name: ${PROJECT_NAME}-init-permissions
+    command: ["sh", "-c", "mkdir -p /app/artifacts /app/data /app/logs /app/mlflow && \
+               chown -R ${HOST_UID}:${HOST_GID} /app/artifacts /app/data /app/logs /app/mlflow || true; \
+               chmod -R a+rwx /app/artifacts /app/data /app/logs /app/mlflow || true; \
+               exit 0"]
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./mlflow:/app/mlflow
+    restart: "no"
+
+  training:
+    build:
+      context: .
+      dockerfile: deployment/training/Dockerfile
+    image: ${PROJECT_NAME}-training:${VERSION:-latest}
+    container_name: ${PROJECT_NAME}-training
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      init-permissions:
+        condition: service_completed_successfully
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data   
+      - ./logs:/app/logs
+      - ./mlflow:/app/mlflow
+    profiles: ["train"]   # run on demand: docker compose --profile train up training
+
+  serving:
+    build:
+      context: .
+      dockerfile: deployment/serving/Dockerfile
+    image: ${PROJECT_NAME}-serving:${VERSION:-latest}
+    container_name: ${PROJECT_NAME}-serving
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      init-permissions:
+        condition: service_completed_successfully
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      SERVING_CONTAINER_PORT: ${SERVING_CONTAINER_PORT}
+      MODEL_SOURCE: ${MODEL_SOURCE:-mlflow}
+    ports:
+      - "${SERVING_HOST_PORT}:${SERVING_CONTAINER_PORT}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${SERVING_CONTAINER_PORT}/ping')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    volumes:
+      - ./mlflow:/app/mlflow
+      # WORKDIR is /app and nothing chdirs at runtime, so logger.py's relative
+      # "logs/" path resolves to /app/logs -- mount it here to reach the host.
+      - ./logs:/app/logs
