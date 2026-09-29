@@ -52,7 +52,7 @@ INPUT_SCHEMA = pa.DataFrameSchema( {
     })
 """
 
-def run_schema_validation(df: pd.DataFrame, schema: pa.DataFrameSchema) -> tuple[pd.DataFrame, pd.DataFrame]:
+def partition_by_schema(df: pd.DataFrame, schema: pa.DataFrameSchema) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Core validation logic, shared by batch and single-record paths.
     Returns (valid_rows, rejected_rows_with_reason).
     """
@@ -67,9 +67,9 @@ def run_schema_validation(df: pd.DataFrame, schema: pa.DataFrameSchema) -> tuple
         return valid, rejected
 
 
-def validate_input(df: pd.DataFrame, schema: pa.DataFrameSchema) -> tuple[pd.DataFrame, pd.DataFrame]:
+def validate_input_against_schema(df: pd.DataFrame, schema: pa.DataFrameSchema) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Batch path: tolerates partial failure, quarantines bad rows, keeps going."""
-    valid, rejected = run_schema_validation(df, schema)
+    valid, rejected = partition_by_schema(df, schema)
     if not rejected.empty:
         Logger.warning(f"{len(rejected)}/{len(df)} rows failed validation and were quarantined")
     return valid, rejected

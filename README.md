@@ -29,19 +29,31 @@ Initial machine learning implementation.
   - deactivate if you want to come out of the virtual environment
 
 - Local conda environemnt
-  - conda env create -f environment.yaml
+  - conda env create --prefix C:\github\personal-loan-classification\.conda -f .\environment.yaml
   - conda activate env-personal-loan
   - open notebook and select the local python .venv as kernel
   - run all the cells
 
 - Inside docker
-  - docker build -t personal-loan-classification .
-  - docker run --rm -p 8888:8888 -e JUPYTER_TOKEN=my-secret-token personal-loan-classification
-  - Run with gpu
-    - check if GPU is available
-    - nvidia-smi
-    - If avialable,
-    - docker run --gpus all --rm -p 8888:8888 -e JUPYTER_TOKEN=my-secret-token personal-loan-classification
-    - open http://localhost:8888/?token=my-secret-token
-    - run the notebook
+  - docker compose --env-file .env config    # validates + shows fully resolved compose file — do this first
 
+### Build all images, including training
+
+- docker compose --profile train build
+
+### Start MLflow
+
+docker compose up -d mlflow
+
+### Run training
+
+docker compose --profile train up training
+
+### Start serving
+
+docker compose up -d serving
+
+
+- MLflow UI: http://localhost:5000
+- Serving API: http://localhost:8080
+- Serving health: http://localhost:8080/ping

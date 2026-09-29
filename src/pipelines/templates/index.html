@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Personal Loan Inference</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 24px; }
+      .card { border: 1px solid #ddd; padding: 16px; margin-bottom: 16px; border-radius: 6px; }
+      label { display:block; margin-bottom:8px; font-weight:600 }
+      textarea { width:100%; height:120px }
+      pre { background:#f7f7f7; padding:12px; border-radius:6px; overflow:auto }
+      button { padding:8px 12px }
+      .badge { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:12px; color:#fff; font-weight:700; transform-origin:center; transition:transform 200ms ease, box-shadow 200ms ease }
+      .badge .icon { width:16px; height:16px; display:inline-block }
+      .badge.green{ background:#28a745 }
+      .badge.red{ background:#dc3545 }
+      .badge.animate{ transform:scale(1.06); box-shadow:0 6px 18px rgba(0,0,0,0.12) }
+      .alert { padding:10px 12px; border-radius:6px; margin-bottom:12px }
+      .alert.error{ background:#ffe5e5; color:#721c24; border:1px solid #f5c6cb }
+      .alert.info{ background:#e8f4ff; color:#084298; border:1px solid #b6d4fe }
+      /* Modal */
+      .modal-overlay{ position:fixed; inset:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center }
+      .modal{ background:#fff; padding:18px; border-radius:8px; max-width:800px; width:90%; box-shadow:0 6px 30px rgba(0,0,0,0.2) }
+      .modal pre{ max-height:400px; overflow:auto }
+    </style>
+  </head>
+  <body>
+    <h1>Personal Loan - Inference</h1>
+
+    <div class="card">
+      <h2>Single Prediction</h2>
+      <p>Enter values for the features below and click <strong>Predict</strong>.</p>
+      <div id="single-form">
+        {% for field in fields %}
+          {% if field.field_type == 'select' %}
+            <label>{{ field.label }}:
+              <select id="{{ field.name }}" data-field-name="{{ field.name }}" data-step="{{ field.step }}" data-raw-type="{{ field.input_type }}">
+                {% for option in field.options %}
+                  <option value="{{ option }}" {% if option == field.default %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          {% else %}
+            <label>{{ field.label }}: <input type="{{ field.input_type }}" id="{{ field.name }}" value="{{ field.default }}" data-field-name="{{ field.name }}" data-step="{{ field.step }}" data-raw-type="{{ field.input_type }}" {% if field.min is not none %}min="{{ field.min }}"{% endif %} {% if field.max is not none %}max="{{ field.max }}"{% endif %} /></label>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <div style="margin-top:8px">
+        <button onclick="doSinglePredictFromFields()">Predict</button>
+      </div>
+      <div id="single-alert-area"></div>
+      <div id="single-summary" style="margin-top:8px"></div>
+      <h3>Result</h3>
+      <pre id="single-result">(no result yet)</pre>
+    </div>
+
+    <div class="card">
+      <h2>Batch Prediction (CSV file)</h2>
+      <p>Upload a CSV file containing one row per record. The server will validate and return a list of predictions.</p>
+      <input type="file" id="batch-file" accept="text/csv" />
+      <div style="margin-top:8px">
+        <button onclick="doBatchPredict()">Upload & Predict</button>
+      </div>
+      <div id="batch-alert-area"></div>
+      <h3>Results</h3>
+      <pre id="batch-result">(no result yet)</pre>
+    </div>
+
+    <div id="modal-overlay" class="modal-overlay" role="dialog" aria-modal="true">
+      <div class="modal">
+        <h3 id="modal-title">Server Error</h3>
+        <pre id="modal-body"></pre>
+        <div style="text-align:right; margin-top:8px"><button onclick="hideModal()">Close</button></div>
+      </div>
+    </div>
+
+    <script>
+      async function doSinglePredict(){
+        const txt = document.getElementById('single-json') ? document.getElementById('single-json').value.trim() : '';
+        let payload = null;
+        try{
+          payload = JSON.parse(txt);
+        }catch(e){
+          alert('Invalid JSON for single prediction')
+          return
+        }
+        let res;
+        try{ res = await fetch('/predict', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }catch(e){ showAlert(`Request failed: ${e.message}`,'error','single'); return }
+        if(!res.ok){ let txt=''; try{ txt = await res.text() }catch(e){ txt=String(e) } showModal('Prediction error', txt); return }
+        const data = await res.json();
+        document.getElementById('single-result').textContent = JSON.stringify(data, null, 2)
+      }
+
+      async function doBatchPredict(){
+        clearAlert('batch');
+        const input = document.getElementById('batch-file')
+        if(!input.files || !input.files[0]){ showAlert('Select a CSV file first','error','batch'); return }
+        const form = new FormData()
+        form.append('file', input.files[0])
+        let res;
+        try{ res = await fetch('/predict_batch', { method: 'POST', body: form }) }catch(e){ showAlert(`Request failed: ${e.message}`,'error','batch'); return }
+        if(!res.ok){ let txt=''; try{ txt = await res.text() }catch(e){ txt=String(e) } showModal('Batch prediction error', txt); return }
+        const data = await res.json()
+        // Prefer a human-friendly one-record-per-line view for batch results
+        if(data && Array.isArray(data.prediction)){
+          const preds = data.prediction;
+          const lines = preds.map((p,i)=> `${i+1}. ${renderPredictionMessage(p)} (raw: ${p})`);
+          document.getElementById('batch-result').textContent = lines.join('\n');
+          // also surface a compact alert summary
+          showAlert(lines.join('\n'),'info','batch')
+        }else{
+          document.getElementById('batch-result').textContent = JSON.stringify(data, null, 2)
+        }
+      }
+
+      function getValue(id){
+        const el = document.getElementById(id);
+        if(!el) return null;
+        const v = el.value;
+        return v === undefined || v === null || v === '' ? null : v;
+      }
+
+      async function doSinglePredictFromFields(){
+        const formFields = Array.from(document.querySelectorAll('#single-form [data-field-name]'));
+        const payload = {};
+
+        for(const el of formFields){
+          const fieldName = el.dataset.fieldName;
+          const rawValue = el.value;
+          if(rawValue === null || rawValue === undefined || rawValue === ''){ showAlert(`Field ${fieldName} is required`,'error','single'); return }
+
+          const step = String(el.dataset.step || '1');
+          const isFloat = step.includes('.') || step === '0.01' || el.dataset.rawType === 'float';
+          let v = isFloat ? parseFloat(rawValue) : parseInt(rawValue, 10);
+          if(Number.isNaN(v)){ showAlert(`Invalid value for ${fieldName}`,'error','single'); return }
+          payload[fieldName] = v;
+        }
+
+        clearAlert('single');
+        let res;
+        try{ res = await fetch('/predict', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); }catch(e){ showAlert(`Request failed: ${e.message}`,'error','single'); return }
+        if(!res.ok){ let txt=''; try{ txt = await res.text() }catch(e){ txt = String(e) } showModal('Prediction error', txt); return }
+        const data = await res.json();
+        document.getElementById('single-result').textContent = JSON.stringify(data, null, 2)
+        // friendly summary
+        const p = data && (data.prediction ?? data.result ?? data["prediction"])
+        if(p !== undefined && p !== null){
+          document.getElementById('single-summary').innerHTML = renderSummaryHTML(p)
+          // animate badge briefly
+          const badge = document.querySelector('#single-summary .badge');
+          if(badge){ badge.classList.add('animate'); setTimeout(()=>badge.classList.remove('animate'), 600) }
+        }
+      }
+
+      function renderPredictionMessage(p){
+        const n = parseInt(p,10);
+        if(n === 1) return 'Potential candidate for loan';
+        if(n === 0) return 'Not a potential candidate for loan';
+        return `Unknown prediction: ${p}`;
+      }
+
+      function renderSummaryHTML(p){
+        const n = Array.isArray(p) ? p[0] : p;
+        const num = parseInt(n,10);
+        const msg = renderPredictionMessage(num);
+        const cls = num === 1 ? 'badge green' : (num === 0 ? 'badge red' : 'badge');
+        return `<div><span class="${cls}">${msg}</span> <small style="margin-left:8px;color:#555">(raw: ${num})</small></div>`
+      }
+
+      function showAlert(message, type='info', area='single'){
+        const container = document.getElementById(area === 'batch' ? 'batch-alert-area' : 'single-alert-area');
+        const div = document.createElement('div');
+        div.className = `alert ${type === 'error' ? 'error' : 'info'}`;
+        div.textContent = message;
+        container.innerHTML = '';
+        container.appendChild(div);
+      }
+
+      function clearAlert(area='single'){
+        const container = document.getElementById(area === 'batch' ? 'batch-alert-area' : 'single-alert-area');
+        container.innerHTML = '';
+      }
+
+      function showModal(title, text){
+        document.getElementById('modal-title').textContent = title;
+        document.getElementById('modal-body').textContent = text;
+        const o = document.getElementById('modal-overlay');
+        o.style.display = 'flex';
+      }
+
+      function hideModal(){ document.getElementById('modal-overlay').style.display = 'none' }
+    </script>
+  </body>
+</html>
